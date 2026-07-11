@@ -28,7 +28,7 @@ const C = {
   target: 0xe0e0e0,
 };
 
-const samples = goalSamples(GOAL_POSE, 3);
+const samples = goalSamples(GOAL_POSE); // step scales with sizeScale (constant sample count)
 
 // ---------- pixi setup ----------
 const app = new Application();
@@ -75,7 +75,8 @@ layout();
 function drawT(color: number, alpha: number): Container {
   const c = new Container();
   const g = new Graphics();
-  for (const b of T_BOXES) g.rect(b.cx - b.hx, b.cy - b.hy, b.hx * 2, b.hy * 2);
+  const k = DEFAULT_CONFIG.sizeScale;
+  for (const b of T_BOXES) g.rect((b.cx - b.hx) * k, (b.cy - b.hy) * k, b.hx * 2 * k, b.hy * 2 * k);
   g.fill({ color, alpha });
   c.addChild(g);
   return c;

@@ -47,6 +47,7 @@ export interface SimConfig {
   agentMass: number; // used in dynamic mode
   agentMaxForce: number; // dynamic-mode force clamp (0 = unlimited)
   boundaryGuard: boolean; // position-level invariant: bodies projected back into the play area after each substep
+  sizeScale: number; // scales the T geometry (and everything derived from it); 1 = dataset size
   contactNaturalFrequency: number | null; // null = Rapier default
   solver: "default" | "pgsSmall" | "pgsSmallNoWarmstart" | "standardPgs";
 }
@@ -55,7 +56,9 @@ export const DEFAULT_CONFIG: SimConfig = {
   worldSize: 512,
   simHz: 100,
   controlHz: 10,
-  agentRadius: 15,
+  // Product default: 1.5x-size T and robot (finger occlusion on phones vs
+  // playability); dataset-faithful 1x geometry lives in REFERENCE_CONFIG.
+  agentRadius: 22.5,
   kp: 100,
   kv: 20,
   blockMass: 1,
@@ -82,6 +85,7 @@ export const DEFAULT_CONFIG: SimConfig = {
   agentMass: 60,
   agentMaxForce: 0,
   boundaryGuard: true,
+  sizeScale: 1.5,
   contactNaturalFrequency: null,
   solver: "default",
 };
@@ -98,6 +102,8 @@ export const REFERENCE_CONFIG: Partial<SimConfig> = {
   agentMode: "kinematic", // the reference agent is an unstoppable kinematic body
   agentCcd: false,
   boundaryGuard: false, // pure reference physics for dataset validation
+  agentRadius: 15,
+  sizeScale: 1,
 };
 
 // The T as two axis-aligned boxes in body frame (origin = COM = keypoint
@@ -123,13 +129,13 @@ export const T_OUTLINE: readonly [number, number][] = [
 ];
 
 /** True if a world point lies inside the T placed at the given pose. */
-export function pointInT(px: number, py: number, pose: BlockPose): boolean {
+export function pointInT(px: number, py: number, pose: BlockPose, scale = 1): boolean {
   const ca = Math.cos(-pose.angle);
   const sa = Math.sin(-pose.angle);
   const dx = px - pose.x;
   const dy = py - pose.y;
-  const bx = ca * dx - sa * dy; // into body frame
-  const by = sa * dx + ca * dy;
+  const bx = (ca * dx - sa * dy) / scale; // into (unit-scale) body frame
+  const by = (sa * dx + ca * dy) / scale;
   for (const b of T_BOXES) {
     if (Math.abs(bx - b.cx) <= b.hx && Math.abs(by - b.cy) <= b.hy) return true;
   }
@@ -250,7 +256,8 @@ export class PushTSim {
     //   (uniform density) -> correct rigid-body dynamics (COM (0,-4.29),
     //   inertia ~1932 for mass 1). This is our product default.
     const physical = c.blockMassMode === "physical";
-    const totalArea = T_BOXES.reduce((s, b) => s + 4 * b.hx * b.hy, 0);
+    const k = c.sizeScale;
+    const totalArea = T_BOXES.reduce((s, b) => s + 4 * b.hx * b.hy, 0) * k * k;
     const density = physical ? c.blockMass / totalArea : 0;
 
     const bd = RAPIER.RigidBodyDesc.dynamic()
@@ -267,8 +274,8 @@ export class PushTSim {
 
     for (const box of T_BOXES) {
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(box.hx, box.hy)
-          .setTranslation(box.cx, box.cy)
+        RAPIER.ColliderDesc.cuboid(box.hx * k, box.hy * k)
+          .setTranslation(box.cx * k, box.cy * k)
           .setDensity(density)
           .setFriction(c.contactFriction)
           .setRestitution(c.contactRestitution),
@@ -350,8 +357,9 @@ export class PushTSim {
     const sa = Math.sin(-a);
     const dx = wx - bp.x;
     const dy = wy - bp.y;
-    const px = ca * dx - sa * dy;
-    const py = sa * dx + ca * dy;
+    const k = this.cfg.sizeScale;
+    const px = (ca * dx - sa * dy) / k;
+    const py = (sa * dx + ca * dy) / k;
     let inside = false;
     let d = Infinity;
     for (let i = 0, j = T_OUTLINE.length - 1; i < T_OUTLINE.length; j = i++) {
@@ -364,7 +372,8 @@ export class PushTSim {
       const t = Math.max(0, Math.min(1, ((px - xi) * (xj - xi) + (py - yi) * (yj - yi)) / l2));
       d = Math.min(d, Math.hypot(px - (xi + t * (xj - xi)), py - (yi + t * (yj - yi))));
     }
-    return inside ? -d : d;
+    // body-frame coords were divided by sizeScale, so scale the distance back
+    return (inside ? -d : d) * k;
   }
 
   /**
@@ -482,11 +491,12 @@ export class PushTSim {
   blockKeypoints(): number[] {
     const p = this.block.translation();
     const a = this.block.rotation();
+    const k = this.cfg.sizeScale;
     const ca = Math.cos(a);
     const sa = Math.sin(a);
     const out: number[] = [];
     for (const [bx, by] of KEYPOINTS_BODY) {
-      out.push(p.x + ca * bx - sa * by, p.y + sa * bx + ca * by);
+      out.push(p.x + (ca * bx - sa * by) * k, p.y + (sa * bx + ca * by) * k);
     }
     return out;
   }
