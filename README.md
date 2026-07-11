@@ -51,20 +51,20 @@ centroids (the body origin), rather than the true area-weighted centre of mass.
 So the shipped block has inertia **3000** about the wrong axis; a uniform-density
 T of mass 1 physically has COM **(0, −4.29)** and inertia **1932**.
 
-The sim supports both via `blockMassMode`:
+The sim has exactly two modes (`new PushTSim(mode)`):
 
-- **`"physical"` (`DEFAULT_CONFIG`, our product default)** — Rapier derives
-  mass/COM/inertia from the actual geometry. Correct rigid-body dynamics.
-- **`"reference"` (`REFERENCE_CONFIG`)** — reproduces the pymunk env bug-for-bug
-  (mass 1, COM (0,0), inertia 3000). This is what matches the dataset, so the
-  eval harness uses it.
+- **`"product"`** (the game) — Rapier derives mass/COM/inertia from the actual
+  geometry. Correct rigid-body dynamics, plus the robustness features below and
+  1.5x-size T/robot for phone playability.
+- **`"reference"`** (the eval harness) — reproduces the pymunk env bug-for-bug
+  (mass 1, COM (0,0), inertia 3000, kinematic agent, 1x geometry). This is what
+  matches the dataset.
 
-Consequence: our UI now differs from `lerobot/pusht` by design (the block
-rotates about the true COM with correct inertia — median ~21 px divergence from
-the recorded, buggy trajectories over the full dataset). The velocity-reset /
-no-coast behaviour (`damping=0`) is kept — that is a deliberate PushT design
-choice, not a bug. Dataset parity is still fully reproducible via
-`REFERENCE_CONFIG`.
+Consequence: the UI differs from `lerobot/pusht` by design (the block rotates
+about the true COM with correct inertia — median ~21 px divergence from the
+recorded, buggy trajectories over the full dataset). The velocity-reset /
+no-coast behaviour (`damping=0`) is kept in both modes — that is a deliberate
+PushT design choice, not a bug.
 
 ## Robustness: walls & agent (product vs reference)
 
@@ -73,14 +73,14 @@ wall (especially into a corner) or, when flicked fast, tunnel through the block.
 Faithful to the reference, but bad for a live demo. The product default fixes
 this without touching dataset fidelity:
 
-- **`agentMode: "dynamic"`** — the agent is a finite-mass body driven by a PD
-  *force* (`F = m·(kp·e − kv·v)`). Unobstructed it tracks the target identically
-  to the kinematic agent (the mass cancels: `a = kp·e − kv·v`), but walls and the
-  block genuinely stop it, so no crush-through and no tunnelling. `agentCcd` adds
-  swept collision for fast motion.
-- **Thick walls** (`wallThickness`, extend outward from a fixed inner face) and
-  **`blockCcd`** guard the block against tunnelling.
-- **`boundaryGuard`** — the definitive fix for wall escapes. Solver contacts are
+- **Dynamic agent** — the agent is a finite-mass body driven by a PD *force*
+  (`F = m·(kp·e − kv·v)`). Unobstructed it tracks the target identically to the
+  kinematic agent (the mass cancels: `a = kp·e − kv·v`), but walls and the block
+  genuinely stop it, so no crush-through and no tunnelling. CCD adds swept
+  collision for fast motion.
+- **Thick walls** (extend outward from a fixed inner face) and block CCD guard
+  the block against tunnelling.
+- **Bounds guard** (`keepInBounds`) — the definitive fix for wall escapes. Solver contacts are
   compliant springs, so a fast heavy agent can *ratchet* the block into a wall
   over repeated impacts (adversarial corner-whipping reached 74 px of
   penetration; CCD cannot help once bodies already overlap, and stiffening
@@ -88,7 +88,7 @@ this without touching dataset fidelity:
   at position level: after every substep any body outside the walls' inner
   faces is projected back inside. It is a strict no-op in the interior.
   Verified: 0.0 px worst penetration over 48k adversarial substeps.
-- **No-pass-through guard** (part of `boundaryGuard`) — when the block is
+- **No-pass-through guard** (`noPassThrough`) — when the block is
   wall-pinned, the agent's unbounded PD force drives its centre past the T's
   15 px half-thickness and the solver ejects it out the far side; no
   stiffness/force-cap setting prevents this (measured). After every substep, an
@@ -104,8 +104,8 @@ this without touching dataset fidelity:
   capture**, so drags keep tracking when the finger leaves the canvas — without
   it the target freezes short of the borders and the robot feels slow there.
 
-`REFERENCE_CONFIG` keeps `agentMode: "kinematic"` (+ the inertia bug), so dataset
-validation is unchanged — parity stays at median 0.088 px.
+Reference mode keeps the kinematic agent (+ the inertia bug) and no guards, so
+dataset validation is unchanged — parity stays at median 0.088 px.
 
 ## Validation method
 
@@ -153,9 +153,11 @@ fraction of episodes: <=0.5px 92.7%   <=1px 93.7%   <=2px 96.1%   <=5px 97.6%
 Worst 10 episodes: `ep107` 68.8px (204° rot), `ep192` 56px (180°), `ep78` 22px
 (196°), `ep204` 7.3px, `ep50` 5.2px, then everything ≤3.2px.
 
-## What the tuning sweep showed (`eval/sweep.ts`)
+## What the tuning sweeps showed
 
-The defaults are near-optimal, and the sweep doubles as a correctness check:
+(The sweep scripts served their purpose and were removed; the findings are
+recorded here.) The chosen parameters are near-optimal, and the sweep doubled
+as a correctness check:
 
 - Letting the block coast (`resetBlockVel=false`) → **159 px** error. The
   velocity-reset is the dominant modeling factor.
@@ -165,9 +167,8 @@ The defaults are near-optimal, and the sweep doubles as a correctness check:
   deviation blows up the error.
 - Solver iterations barely matter (the contact solution is geometric/converged).
 
-Iterating on the full 206-episode set (`eval/compareFull.ts`) confirms the
-defaults are optimal and that the divergence tail is irreducible by global
-tuning:
+Iterating on the full 206-episode set confirmed the parameters are optimal and
+that the divergence tail is irreducible by global tuning:
 
 ```
 variant          median   p95    p99    max    <=2px
@@ -190,11 +191,12 @@ python3 -m venv .venv && .venv/bin/pip install pyarrow numpy
 curl -sSL https://huggingface.co/datasets/lerobot/pusht_keypoints/resolve/main/data/chunk-000/file-000.parquet -o data/pusht_keypoints.parquet
 .venv/bin/python scripts/extract.py 0 5            # 5 random episodes -> data/episodes.json
 
+.venv/bin/python scripts/extract.py 0 206 data/episodes_all.json   # full dataset
+
 # 2. sim + eval (Node)
 npm install
-npx tsx eval/runEval.ts          # main diff table
-npx tsx eval/diagnose.ts         # per-episode motion vs max error
-npx tsx eval/sweep.ts            # parameter sensitivity
+npx tsx eval/runEval.ts          # per-episode diff table (data/episodes.json)
+npx tsx eval/fullEval.ts         # error distribution over all 206 episodes
 ```
 
 ## Interactive UI (PixiJS)
@@ -202,9 +204,10 @@ npx tsx eval/sweep.ts            # parameter sensitivity
 A mobile-first web app wraps the validated `PushTSim`:
 
 - `index.html` — HTML/CSS shell (status line, solved counter, Restart / Save).
-- `src/main.ts` — PixiJS renderer + pointer/touch controls + real-time loop.
-- `src/game/pushtGame.ts` — random reset (reference ranges), goal pose, coverage
-  (grid-sampled overlap), success at ≥95%, and JSON episode recording.
+- `src/main.ts` — PixiJS renderer + pointer/touch controls + real-time loop +
+  JSON episode recording.
+- `src/game/pushtGame.ts` — random reset, goal pose, coverage (grid-sampled
+  overlap), success at ≥95%.
 
 Run it locally:
 

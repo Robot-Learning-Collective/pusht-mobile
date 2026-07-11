@@ -1,11 +1,12 @@
+/**
+ * Replay recorded lerobot/pusht episodes through the sim in "reference" mode
+ * and print per-episode differences from the ground truth.
+ *
+ *   npx tsx eval/runEval.ts [data/episodes.json]
+ */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { PushTSim, initRapier, REFERENCE_CONFIG, type SimConfig } from "../src/sim/pushtSim.js";
+import { PushTSim, initRapier } from "../src/sim/pushtSim.js";
 import { poseFromKeypoints, angleDiff, meanKeypointError } from "./pose.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA = resolve(__dirname, "..", process.env.EPISODES ?? "data/episodes.json");
 
 interface Episode {
   episode_index: number;
@@ -13,124 +14,44 @@ interface Episode {
   agent: number[][];
   keypoints: number[][];
   action: number[][];
-  success: boolean[];
 }
 
-interface EpResult {
-  ep: number;
-  nFrames: number;
-  agentRmse: number;
-  agentMax: number;
-  blockPosMean: number;
-  blockPosFinal: number;
-  blockAngMeanDeg: number;
-  blockAngFinalDeg: number;
-  kpMean: number;
-  kpFinal: number;
-}
+const rad2deg = (r: number) => (r * 180) / Math.PI;
+const fmt = (n: number, w = 7, d = 2) => n.toFixed(d).padStart(w);
 
-function rad2deg(r: number): number {
-  return (r * 180) / Math.PI;
-}
+await initRapier();
+const path = process.argv[2] ?? "data/episodes.json";
+const { episodes } = JSON.parse(readFileSync(path, "utf8")) as { episodes: Episode[] };
+const sim = new PushTSim("reference");
 
-export function evalEpisode(sim: PushTSim, ep: Episode): EpResult {
-  const N = ep.n_frames;
-  const gt0 = poseFromKeypoints(ep.keypoints[0]);
-  sim.reset(ep.agent[0] as [number, number], [gt0.x, gt0.y], gt0.angle);
+console.log("ep      frames  agentRMSE  blkPosMean  blkAngMean(deg)  kpMean(px)  kpFinal");
+let kpTotal = 0;
+for (const ep of episodes) {
+  const poses = ep.keypoints.map(poseFromKeypoints);
+  sim.reset(ep.agent[0] as [number, number], [poses[0].x, poses[0].y], poses[0].angle);
 
   let agentSq = 0;
-  let agentMax = 0;
-  let blockPosSum = 0;
-  let blockAngSum = 0;
+  let posSum = 0;
+  let angSum = 0;
   let kpSum = 0;
-  let blockPosFinal = 0;
-  let blockAngFinal = 0;
   let kpFinal = 0;
-  let count = 0;
-
-  for (let t = 0; t < N - 1; t++) {
+  const n = ep.n_frames - 1;
+  for (let t = 0; t < n; t++) {
     sim.step(ep.action[t] as [number, number]);
-    const next = t + 1;
-
-    // agent error
     const [ax, ay] = sim.agentPos();
-    const dax = ax - ep.agent[next][0];
-    const day = ay - ep.agent[next][1];
-    const ae = Math.hypot(dax, day);
-    agentSq += ae * ae;
-    agentMax = Math.max(agentMax, ae);
-
-    // block error
-    const gt = poseFromKeypoints(ep.keypoints[next]);
+    agentSq += (ax - ep.agent[t + 1][0]) ** 2 + (ay - ep.agent[t + 1][1]) ** 2;
+    const gt = poses[t + 1];
     const sp = sim.blockPose();
-    const bpe = Math.hypot(sp.x - gt.x, sp.y - gt.y);
-    const bae = Math.abs(rad2deg(angleDiff(sp.angle, gt.angle)));
-    const kpe = meanKeypointError(sim.blockKeypoints(), ep.keypoints[next]);
-
-    blockPosSum += bpe;
-    blockAngSum += bae;
-    kpSum += kpe;
-    blockPosFinal = bpe;
-    blockAngFinal = bae;
-    kpFinal = kpe;
-    count++;
+    posSum += Math.hypot(sp.x - gt.x, sp.y - gt.y);
+    angSum += Math.abs(rad2deg(angleDiff(sp.angle, gt.angle)));
+    kpFinal = meanKeypointError(sim.blockKeypoints(), ep.keypoints[t + 1]);
+    kpSum += kpFinal;
   }
-
-  return {
-    ep: ep.episode_index,
-    nFrames: N,
-    agentRmse: Math.sqrt(agentSq / count),
-    agentMax,
-    blockPosMean: blockPosSum / count,
-    blockPosFinal,
-    blockAngMeanDeg: blockAngSum / count,
-    blockAngFinalDeg: blockAngFinal,
-    kpMean: kpSum / count,
-    kpFinal,
-  };
-}
-
-function fmt(n: number, w = 7, d = 2): string {
-  return n.toFixed(d).padStart(w);
-}
-
-export async function runEval(cfg: Partial<SimConfig> = {}, label = "reference"): Promise<number> {
-  await initRapier();
-  const { episodes } = JSON.parse(readFileSync(DATA, "utf8")) as { episodes: Episode[] };
-  // Validation is against the dataset -> reproduce the reference (buggy) env.
-  const sim = new PushTSim({ ...REFERENCE_CONFIG, ...cfg });
-
-  const results = episodes.map((ep) => evalEpisode(sim, ep));
-
-  console.log(`\n=== config: ${label} ===`);
+  kpTotal += kpSum / n;
   console.log(
-    "ep      frames  agentRMSE agentMax  blkPosMean blkPosFin  blkAngMean blkAngFin  kpMean  kpFinal",
+    `${String(ep.episode_index).padStart(4)}  ${String(ep.n_frames).padStart(6)}  ${fmt(
+      Math.sqrt(agentSq / n)
+    )}  ${fmt(posSum / n)}      ${fmt(angSum / n)}       ${fmt(kpSum / n)}  ${fmt(kpFinal)}`
   );
-  for (const r of results) {
-    console.log(
-      `${String(r.ep).padStart(4)}  ${String(r.nFrames).padStart(6)}  ${fmt(r.agentRmse)}  ${fmt(
-        r.agentMax,
-      )}  ${fmt(r.blockPosMean)}    ${fmt(r.blockPosFinal)}  ${fmt(r.blockAngMeanDeg)}    ${fmt(
-        r.blockAngFinalDeg,
-      )}  ${fmt(r.kpMean)}  ${fmt(r.kpFinal)}`,
-    );
-  }
-  const mean = (f: (r: EpResult) => number) => results.reduce((s, r) => s + f(r), 0) / results.length;
-  console.log(
-    `MEAN          ${fmt(mean((r) => r.agentRmse))}  ${fmt(mean((r) => r.agentMax))}  ${fmt(
-      mean((r) => r.blockPosMean),
-    )}    ${fmt(mean((r) => r.blockPosFinal))}  ${fmt(mean((r) => r.blockAngMeanDeg))}    ${fmt(
-      mean((r) => r.blockAngFinalDeg),
-    )}  ${fmt(mean((r) => r.kpMean))}  ${fmt(mean((r) => r.kpFinal))}`,
-  );
-  // primary objective: mean keypoint error over all frames (captures pos+angle)
-  return mean((r) => r.kpMean);
 }
-
-// Run with defaults when invoked directly.
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
-if (isMain) {
-  runEval().then((obj) => {
-    console.log(`\nprimary objective (mean keypoint error, px): ${obj.toFixed(3)}`);
-  });
-}
+console.log(`\nmean keypoint error over ${episodes.length} episodes: ${(kpTotal / episodes.length).toFixed(3)} px`);
