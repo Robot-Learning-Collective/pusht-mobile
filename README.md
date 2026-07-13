@@ -6,12 +6,12 @@ collection, validated for fidelity against the real HuggingFace
 
 ## What this is
 
-- `src/sim/pushtSim.ts` — framework-agnostic TypeScript PushT simulation on
-  **Rapier2D** (`@dimforge/rapier2d-compat`, runs in both Node and the browser).
-  This is the physics engine that will plug into the PixiJS renderer + touch
-  controls. No rendering or DOM dependencies.
-- `eval/` — an offline harness that replays recorded demonstrations through the
-  sim and measures the difference from ground truth.
+- `rust/pusht-core` — the PushT simulation on **Rapier2D**, compiled to wasm
+  for the browser UI and to a Python module for training evals (see “Rust
+  core” below). No rendering or DOM dependencies.
+- `rust/pusht-core/src/bin/replay.rs` — an offline harness that replays
+  recorded demonstrations through the sim and measures the difference from
+  ground truth.
 - `scripts/extract.py` — pulls episodes out of the dataset parquet into JSON.
 
 ## How the simulation matches the reference
@@ -113,7 +113,8 @@ dataset validation is unchanged — parity stays at median 0.088 px.
 **`lerobot/pusht_keypoints`**, which adds `observation.environment_state`: the 8
 world-space T keypoints (16 numbers) per frame. From those we recover the
 ground-truth block pose by 2-D Procrustes alignment against the canonical
-body-frame template (`eval/pose.ts`). The keypoint template is constant across
+body-frame template (`pose_from_keypoints` in `pusht-core`). The keypoint
+template is constant across
 all frames to 1e-4 px, confirming a clean rigid body.
 
 For each episode we do an **open-loop rollout**: reset the sim to the recorded
@@ -127,8 +128,8 @@ Metrics (per frame, averaged over the trajectory):
 
 ## Results
 
-Validated on the **entire dataset — all 206 episodes** (`eval/fullEval.ts`),
-open-loop rollout per episode:
+Validated on the **entire dataset — all 206 episodes**
+(`cargo run --release --bin replay`), open-loop rollout per episode:
 
 ```
 agent RMSE:           max 4.95e-5 px        (kinematic + PD is deterministic)
@@ -193,10 +194,8 @@ curl -sSL https://huggingface.co/datasets/lerobot/pusht_keypoints/resolve/main/d
 
 .venv/bin/python scripts/extract.py 0 206 data/episodes_all.json   # full dataset
 
-# 2. sim + eval (Node)
-npm install
-npx tsx eval/runEval.ts          # per-episode diff table (data/episodes.json)
-npx tsx eval/fullEval.ts         # error distribution over all 206 episodes
+# 2. sim + eval (Rust)
+cd rust && cargo run --release --bin replay -- ../data/episodes_all.json
 ```
 
 ## Rust core — the single source of truth
@@ -269,6 +268,10 @@ npm install && npm run build:wasm
 npm run dev                                          # UI on http://localhost:5173
 .venv/bin/python -m uvicorn server.main:app --port 8000   # episode collector
 ```
+
+Production (single origin, e.g. on a RunPod CPU pod): `npm run build`, then
+`scripts/serve.sh` — uvicorn serves `dist/` and `/api` on one port
+(`PORT`, `PUSHT_EPISODES_DIR` env vars).
 
 Touch the blue robot to start, drag to push the grey T onto the green target;
 at ≥95% coverage the episode can be saved (name required). Pre-upload checks
