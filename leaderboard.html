@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PushT — Leaderboard</title>
+    <style>
+      :root {
+        --bg: #14161a;
+        --panel: #1f242b;
+        --text: #e6e9ed;
+        --muted: #8b94a0;
+        --good: #35c46a;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        /* right padding reserves a strip for the fixed QR card */
+        padding: 4vh calc(3vw + 240px) 4vh 4vw;
+      }
+      h1 {
+        margin: 0 0 1vh;
+        font-size: clamp(28px, 5vw, 64px);
+        font-weight: 700;
+      }
+      #total {
+        color: var(--muted);
+        font-size: clamp(18px, 2.5vw, 32px);
+        margin-bottom: 4vh;
+      }
+      #total b { color: var(--good); }
+      #rows {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 1.2vh 3vw;
+        align-items: baseline;
+        font-size: clamp(22px, 3.5vw, 48px);
+        width: min(90vw, 900px);
+      }
+      #rows .rank { text-align: center; min-width: 2em; }
+      #rows .count { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+      #rows .top { font-size: 1.25em; }
+      #message {
+        color: var(--muted);
+        font-size: clamp(20px, 3vw, 40px);
+        margin-top: 8vh;
+      }
+      #qr {
+        position: fixed;
+        top: 3vh;
+        right: 3vw;
+        background: #fff;
+        border-radius: 12px;
+        padding: 10px 10px 6px;
+        text-align: center;
+      }
+      #qr canvas { display: block; }
+      #qr-url {
+        color: #333;
+        font-size: 13px;
+        font-family: ui-monospace, monospace;
+        margin-top: 4px;
+        max-width: 200px;
+        overflow-wrap: break-word;
+      }
+      #qr-label {
+        color: var(--muted);
+        font-size: 14px;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PushT Leaderboard 🏆</h1>
+    <div id="total"></div>
+    <div id="rows"></div>
+    <div id="message"></div>
+    <div id="qr">
+      <canvas id="qr-canvas"></canvas>
+      <div id="qr-url"></div>
+    </div>
+    <script type="module">
+      import QRCode from "qrcode";
+
+      const elTotal = document.getElementById("total");
+      const elRows = document.getElementById("rows");
+      const elMsg = document.getElementById("message");
+      const MEDALS = ["🥇", "🥈", "🥉"];
+
+      // QR for the game itself: same origin as this page, so it's always
+      // correct wherever the app is hosted (LAN, RunPod proxy, ...).
+      const playUrl = location.origin + "/";
+      QRCode.toCanvas(document.getElementById("qr-canvas"), playUrl, {
+        width: 200,
+        margin: 1,
+      });
+      document.getElementById("qr-url").textContent = playUrl.replace(/^https?:\/\//, "");
+
+      const prettyName = (slug) =>
+        slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+      async function refresh() {
+        try {
+          const res = await fetch("/api/stats");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { total, byName } = await res.json();
+          elTotal.innerHTML = `episodes collected: <b>${total}</b>`;
+          elRows.textContent = "";
+          elMsg.textContent = byName.length ? "" : "No episodes yet — be the first!";
+          byName.forEach((e, i) => {
+            const row = [
+              ["rank", MEDALS[i] ?? `${i + 1}.`],
+              ["name", prettyName(e.name)],
+              ["count", String(e.count)],
+            ];
+            for (const [cls, text] of row) {
+              const s = document.createElement("span");
+              s.className = i < 3 ? `${cls} top` : cls;
+              s.textContent = text;
+              elRows.append(s);
+            }
+          });
+        } catch {
+          elMsg.textContent = "Cannot reach the server…";
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

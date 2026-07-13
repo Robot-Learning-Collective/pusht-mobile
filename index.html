@@ -33,6 +33,19 @@
       }
       header h1 { font-size: 16px; margin: 0; font-weight: 600; }
       header .sub { color: var(--muted); font-size: 12px; }
+      #name {
+        appearance: none;
+        margin-left: auto;
+        border: 1px solid #3a414b;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 16px;
+        background: var(--panel);
+        color: var(--text);
+        width: 150px;
+      }
+      #name::placeholder { color: var(--muted); }
+      #name.missing { border-color: #e2674a; }
       #board {
         flex: 1 1 auto;
         position: relative;
@@ -65,12 +78,35 @@
       }
       button.secondary { background: #3a414b; }
       button:disabled { opacity: 0.4; cursor: default; }
+      dialog {
+        border: 0;
+        border-radius: 14px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 20px;
+        width: min(90vw, 340px);
+      }
+      dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+      dialog h2 { margin: 0 0 8px; font-size: 18px; }
+      dialog h2.good { color: var(--good); }
+      dialog h2.bad { color: #e2674a; }
+      dialog p { margin: 0 0 14px; font-size: 14px; color: var(--muted); line-height: 1.4; }
+      .dlg-stats {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px 16px;
+        font-size: 14px;
+        margin: 0 0 16px;
+      }
+      .dlg-stats .v { text-align: right; font-weight: 600; }
+      .dlg-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     </style>
   </head>
   <body>
     <header>
       <h1>PushT</h1>
       <span class="sub">Rapier2D physics · drag the robot to push the T onto the target</span>
+      <input id="name" type="text" placeholder="Your name" maxlength="40" autocomplete="name" enterkeyhint="done" />
     </header>
     <div id="board"></div>
     <footer>
@@ -80,6 +116,20 @@
       <button id="save" class="secondary" disabled>Save episode</button>
       <button id="restart">Restart</button>
     </footer>
+    <dialog id="dialog">
+      <h2 id="dlg-title"></h2>
+      <p id="dlg-msg"></p>
+      <div class="dlg-stats">
+        <span>Frames trimmed</span><span class="v" id="dlg-trimmed"></span>
+        <span>Duration after trim</span><span class="v" id="dlg-duration"></span>
+        <span>Max speed</span><span class="v" id="dlg-speed"></span>
+        <span id="dlg-total-label">Total submitted</span><span class="v" id="dlg-total"></span>
+      </div>
+      <div class="dlg-buttons">
+        <button id="dlg-secondary" class="secondary"></button>
+        <button id="dlg-primary"></button>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

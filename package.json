@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "eval": "tsx eval/runEval.ts",
-    "dev": "vite"
+    "dev": "vite",
+    "build": "vite build",
+    "build:wasm": "wasm-pack build rust/pusht-wasm --target web --release"
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.14.0",
-    "pixi.js": "^8.19.0"
+    "pixi.js": "^8.19.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
