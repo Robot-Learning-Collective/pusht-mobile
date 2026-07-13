@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -72,7 +73,11 @@ def main() -> None:
                 }
             )
         ds.save_episode()
-        collectors.append({"episode_index": i, "name": ep["name"], "file": f.name, "n_frames": len(ep["frames"])})
+        # slug matches the server's per-name stats key, so "Gleb"/"gleb" merge
+        slug = re.sub(r"[^a-z0-9]+", "-", ep["name"].lower()).strip("-") or "anon"
+        collectors.append(
+            {"episode_index": i, "name": ep["name"], "slug": slug, "file": f.name, "n_frames": len(ep["frames"])}
+        )
         print(f"episode {i}: {ep['name']} ({len(ep['frames'])} frames) <- {f.name}")
 
     ds.finalize()
