@@ -1,8 +1,8 @@
 # PushT — Rapier2D simulation, validated against `lerobot/pusht`
 
-A browser-ready PushT physics core (Rapier2D) for the mobile UI described in
-`project_plan.md`, validated for fidelity against the real
-HuggingFace `lerobot/pusht` demonstrations.
+A browser-ready PushT physics core (Rapier2D) for mobile teleop data
+collection, validated for fidelity against the real HuggingFace
+`lerobot/pusht` demonstrations.
 
 ## What this is
 
@@ -199,41 +199,80 @@ npx tsx eval/runEval.ts          # per-episode diff table (data/episodes.json)
 npx tsx eval/fullEval.ts         # error distribution over all 206 episodes
 ```
 
-## Interactive UI (PixiJS)
+## Rust core — the single source of truth
 
-A mobile-first web app wraps the validated `PushTSim`:
+All PushT-specific logic (scene setup, PD servo, pymunk-compat hacks, guards,
+coverage, seeded resets) lives in one Rust crate and is compiled for every
+consumer, so data collection and training evals run **the same code**:
 
-- `index.html` — HTML/CSS shell (status line, solved counter, Restart / Save).
+```
+rust/pusht-core    the sim + game logic (rapier2d = 0.22, the exact engine
+                   version wrapped by @dimforge/rapier2d-compat@0.14)
+rust/pusht-wasm    wasm-bindgen bindings -> browser UI
+rust/pusht-py      PyO3 bindings -> `pusht_core` Python module
+python/            `pusht_mobile_env` gymnasium wrapper (PushTMobile-v0)
+```
+
+Validation (same protocol as the TS sim, against the original lerobot/pusht
+data, all 206 episodes — `cargo run --release --bin replay`):
+agent RMSE max 4.95e-5 px; block kpMeanErr mean 0.95, median 0.088, p95 1.16 —
+identical to the TS numbers above, digit for digit. Native and wasm builds
+produce bit-identical trajectories (`eval/wasmParity.mjs` vs
+`cargo run --release --bin traj`). The phone-collected episodes replay to
+success in the Python env (12/14; the two misses end at coverage 0.947/0.920,
+an artifact of 10 Hz action resampling, not an env mismatch).
+
+Note the version-mapping trap: npm `rapier2d-compat@0.14` wraps **Rust rapier
+0.22**, not 0.14 (see the rapier.js changelog).
+
+Build the bindings:
+
+```bash
+npm run build:wasm                                   # -> rust/pusht-wasm/pkg (needed before npm run dev)
+.venv/bin/maturin build --release -m rust/pusht-py/Cargo.toml
+.venv/bin/pip install rust/target/wheels/pusht_py-*.whl
+.venv/bin/pip install -e python                      # gymnasium wrapper
+```
+
+Use in training code (e.g. ~/pusht-slim):
+
+```python
+import gymnasium as gym
+import pusht_mobile_env  # registers PushTMobile-v0
+
+env = gym.make("PushTMobile-v0")  # obs: {"pixels": 96x96x3 u8, "agent_pos": [x,y]}
+obs, info = env.reset(seed=0)     # action: target position in [0,512]^2
+obs, reward, terminated, truncated, info = env.step(action)
+# terminated == success (coverage >= 0.95); info: coverage, is_success
+```
+
+Observations are rendered by `pusht_mobile_env/render.py` — the same code the
+dataset export uses, so eval pixels match training pixels exactly.
+
+## Interactive UI (PixiJS + wasm core)
+
+A mobile-first web app on top of `pusht-wasm`:
+
+- `index.html` — HTML/CSS shell (name field, status line, result dialogs,
+  Save / Restart).
 - `src/main.ts` — PixiJS renderer + pointer/touch controls + real-time loop +
-  JSON episode recording.
-- `src/game/pushtGame.ts` — random reset, goal pose, coverage (grid-sampled
-  overlap), success at ≥95%.
+  10 Hz episode recording (starts when the user grabs the robot, stops at the
+  exact success step).
+- `leaderboard.html` — projector page, auto-refreshing per-name counts.
+- `server/main.py` — FastAPI collector; one JSON file per successful episode in
+  `server/episodes/`, plus `/api/stats`.
 
 Run it locally:
 
 ```bash
-npm install
-npm run dev          # Vite dev server on http://localhost:5173
+npm install && npm run build:wasm
+npm run dev                                          # UI on http://localhost:5173
+.venv/bin/python -m uvicorn server.main:app --port 8000   # episode collector
 ```
 
-How it plays: touch/click the blue robot to start, then drag — your pointer
-becomes the PD target the robot chases. Push the grey T onto the green target;
-at ≥95% coverage the episode is marked solved and **Save episode** downloads the
-recorded trajectory (engine, config, init state, per-frame state+action, success
-flag — the reproducible format from `project_plan.md`).
-
-Real-time loop: the renderer accumulates wall-clock time and advances the sim in
-fixed dt = 0.01 s substeps (`sim.advance`), applying the live pointer target each
-substep, so the physics stays identical to the validated config while feeling
-smooth. The block velocity-reset (pymunk `damping=0`) means it stops the instant
-you stop pushing, exactly like the reference.
-
-Engine interface the UI relies on: `reset()`, `advance(action, n)` /
-`step(action)`, `agentPos()`, `blockPose()`, `blockKeypoints()`, plus
-`pointInT()` / `T_BOXES` for rendering and coverage.
-
-## Not yet built
-
-The FastAPI upload backend, dashboard, and the richer client-side validation
-(too-short / too-jittery / etc.) from `project_plan.md`. Save currently
-downloads the episode JSON client-side, ready to POST to that backend later.
+Touch the blue robot to start, drag to push the grey T onto the green target;
+at ≥95% coverage the episode can be saved (name required). Pre-upload checks
+drop static frames and reject teleport-fast motion or >20 s episodes; accepted
+episodes are attributed to the entered name. `scripts/export_lerobot.py` turns
+the collected episodes into a standard LeRobot v3 dataset (videos included,
+collector names in `meta/collectors.json`).
