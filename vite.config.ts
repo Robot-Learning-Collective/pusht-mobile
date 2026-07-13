@@ -12,6 +12,18 @@ export default defineConfig({
         main: resolve(root, "index.html"),
         leaderboard: resolve(root, "leaderboard.html"),
       },
+      output: {
+        // Keep Pixi in its own chunk. The entry module uses top-level await
+        // (await app.init()), and Pixi loads its renderer via a runtime
+        // dynamic import(). If Pixi core is inlined into the entry chunk, that
+        // renderer chunk statically depends on the entry — which is suspended
+        // mid-await — and the dynamic import deadlocks, so app.init() never
+        // resolves and the canvas never mounts (dev works; prod build hangs).
+        // Splitting Pixi out breaks that cycle.
+        manualChunks(id) {
+          if (id.includes("node_modules/pixi.js")) return "pixi";
+        },
+      },
     },
   },
   esbuild: { target: "esnext" },
