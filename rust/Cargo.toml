@@ -1,0 +1,3 @@
+[workspace]
+members = ["pusht-core", "pusht-wasm", "pusht-py"]
+resolver = "2"

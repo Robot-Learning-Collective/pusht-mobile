@@ -1,0 +1,15 @@
+[project]
+name = "pusht-mobile-env"
+version = "0.1.0"
+description = "Gymnasium environment backed by the pusht-core Rust sim (PushT mobile)"
+requires-python = ">=3.9"
+dependencies = ["gymnasium>=0.29", "numpy", "pillow"]
+# Also requires the pusht_core extension module (not on PyPI):
+#   maturin build --release -m rust/pusht-py/Cargo.toml && pip install rust/target/wheels/pusht_py-*.whl
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pusht_mobile_env*"]

@@ -1,0 +1,13 @@
+[package]
+name = "pusht-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Pinned to the engine version wrapped by @dimforge/rapier2d-compat@0.14.0
+# (rapier.js 0.14.0 changelog: "Update from the rust library of rapier 0.19 to
+# 0.22"), so the physics core matches the one the demonstrations were
+# collected on.
+rapier2d = "=0.22.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

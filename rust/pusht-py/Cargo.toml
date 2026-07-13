@@ -1,0 +1,14 @@
+[package]
+name = "pusht-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pusht_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Aliased: the extension module itself is called `pusht_core`, which would
+# otherwise collide with the crate name inside the #[pymodule] expansion.
+pusht-core-rs = { path = "../pusht-core", package = "pusht-core" }
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
