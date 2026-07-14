@@ -62,14 +62,19 @@ def main() -> None:
     # Encode video as H.264 instead of LeRobot's libsvtav1 default. AV1 software
     # encoding of these tiny 96x96 frames is ~30x slower (~10 min vs ~20 s for
     # 100 episodes) and yields larger files; H.264 is standard and fully
-    # training-compatible. encoder_threads uses all cores.
+    # training-compatible.
+    #
+    # sched_getaffinity, not os.cpu_count(): on a shared host (e.g. a RunPod pod
+    # pinned to 2 cores) cpu_count() reports the whole machine (e.g. 192), and
+    # asking libx264 for that many threads oversubscribes and is ~15x SLOWER.
+    n_cpu = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
     ds = LeRobotDataset.create(
         args.repo_id,
         fps=fps,
         features=FEATURES,
         root=args.out,
         rgb_encoder=RGBEncoderConfig(vcodec="h264", preset="veryfast", g=2),
-        encoder_threads=os.cpu_count(),
+        encoder_threads=n_cpu,
     )
 
     collectors = []
