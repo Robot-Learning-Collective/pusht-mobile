@@ -14,11 +14,13 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import shutil
 from pathlib import Path
 
 import numpy as np
+from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from pusht_mobile_env.render import IMG, render_frame
 
@@ -57,7 +59,18 @@ def main() -> None:
     first = json.loads(files[0].read_text())
     fps = first["controlHz"]
 
-    ds = LeRobotDataset.create(args.repo_id, fps=fps, features=FEATURES, root=args.out)
+    # Encode video as H.264 instead of LeRobot's libsvtav1 default. AV1 software
+    # encoding of these tiny 96x96 frames is ~30x slower (~10 min vs ~20 s for
+    # 100 episodes) and yields larger files; H.264 is standard and fully
+    # training-compatible. encoder_threads uses all cores.
+    ds = LeRobotDataset.create(
+        args.repo_id,
+        fps=fps,
+        features=FEATURES,
+        root=args.out,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", preset="veryfast", g=2),
+        encoder_threads=os.cpu_count(),
+    )
 
     collectors = []
     for i, f in enumerate(files):
