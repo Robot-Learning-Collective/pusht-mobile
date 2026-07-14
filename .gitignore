@@ -1,5 +1,8 @@
 node_modules/
 .venv/
+.venv-export/
+__pycache__/
+server.pid
 dist/
 data/
 *.log
