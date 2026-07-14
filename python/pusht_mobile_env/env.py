@@ -23,9 +23,15 @@ from .render import render_frame
 class PushTMobileEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": pc.CONTROL_HZ}
 
-    def __init__(self, render_mode: str = "rgb_array", observation_size: int = 96):
+    def __init__(
+        self,
+        render_mode: str = "rgb_array",
+        observation_size: int = 96,
+        render_size: int = 480,
+    ):
         self.render_mode = render_mode
         self.observation_size = observation_size
+        self.render_size = render_size
         self.sim = pc.PushTSim("product")
         self.goal = pc.GOAL_POSE
 
@@ -37,15 +43,18 @@ class PushTMobileEnv(gym.Env):
         )
         self.action_space = spaces.Box(0.0, pc.WORLD, (2,), np.float32)
 
-    def _pixels(self) -> np.ndarray:
+    def _frame(self, size: int) -> np.ndarray:
         return render_frame(
             self.sim.agent_pos(),
             self.sim.block_pose(),
             self.goal,
             pc.PRODUCT_SCALE,
             pc.PRODUCT_AGENT_RADIUS,
-            self.observation_size,
+            size,
         )
+
+    def _pixels(self) -> np.ndarray:
+        return self._frame(self.observation_size)
 
     def _obs(self) -> dict[str, np.ndarray]:
         return {
@@ -74,4 +83,6 @@ class PushTMobileEnv(gym.Env):
         return self._obs(), reward, terminated, False, {"coverage": cov, "is_success": terminated}
 
     def render(self):
-        return self._pixels()
+        # Observations stay observation_size; render() serves render_size for
+        # human-friendly rollout videos (gym_pusht renders 680, we default 480).
+        return self._frame(self.render_size)
