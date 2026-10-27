@@ -248,6 +248,23 @@ obs, reward, terminated, truncated, info = env.step(action)
 Observations are rendered by `pusht_mobile_env/render.py` — the same code the
 dataset export uses, so eval pixels match training pixels exactly.
 
+For state-only training, request five numbers instead of images:
+
+```python
+env = gym.make("PushTMobile-v0", obs_type="state", render_mode=None)
+obs, info = env.reset(seed=0)  # float32 [agent_x, agent_y, T_x, T_y, T_angle]
+```
+
+The angle is in radians, wrapped to `[-pi, pi)`. State observations do not load
+the renderer or generate images. Physics, actions and rewards are the same;
+the default observation mode remains `pixels_agent_pos`.
+
+Run the Python environment checks after installing the bindings:
+
+```bash
+python -m unittest discover -s python -p 'test_*.py'
+```
+
 ## Interactive UI (PixiJS + wasm core)
 
 A mobile-first web app on top of `pusht-wasm`:
