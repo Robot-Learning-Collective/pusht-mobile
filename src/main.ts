@@ -1,3 +1,5 @@
+import { Recording } from "./recording";
+
 import { Application, Container, Graphics } from "pixi.js";
 import wasmInit, {
   Sim,
@@ -10,6 +12,8 @@ import wasmInit, {
   goalPose,
   tBoxes,
 } from "../rust/pusht-wasm/pkg/pusht_wasm.js";
+
+declare const __SIM_SHA256__: string;
 
 await wasmInit();
 
@@ -108,19 +112,12 @@ function agentPos(): [number, number] {
   return [p[0], p[1]];
 }
 
-interface Frame {
-  agent: [number, number];
-  block: [number, number, number]; // x, y, angle
-  action: [number, number];
-}
-
 let init: InitState;
 let started = false;
 let solved = false;
 let target: [number, number] = [0, 0];
-let frames: Frame[] = [];
+let recording = new Recording(sim, CONTROL_HZ);
 let acc = 0;
-let recAcc = 0;
 let episodeCount = 0;
 
 const elStatus = document.getElementById("status")!;
@@ -140,7 +137,7 @@ const dlg = document.getElementById("dialog") as HTMLDialogElement;
 const dlgTitle = document.getElementById("dlg-title")!;
 const dlgMsg = document.getElementById("dlg-msg")!;
 const dlgStats = document.querySelector<HTMLElement>(".dlg-stats")!;
-const dlgTrimmed = document.getElementById("dlg-trimmed")!;
+const dlgFrames = document.getElementById("dlg-frames")!;
 const dlgDuration = document.getElementById("dlg-duration")!;
 const dlgSpeed = document.getElementById("dlg-speed")!;
 const dlgTotalLabel = document.getElementById("dlg-total-label")!;
@@ -149,7 +146,7 @@ const btnDlgPrimary = document.getElementById("dlg-primary") as HTMLButtonElemen
 const btnDlgSecondary = document.getElementById("dlg-secondary") as HTMLButtonElement;
 
 interface EpisodeStats {
-  trimmed: string;
+  frames: string;
   duration: string;
   speed: string;
 }
@@ -175,7 +172,7 @@ function showDialog(o: DialogOpts) {
   dlgMsg.style.display = o.msg ? "" : "none";
   dlgStats.style.display = o.stats ? "" : "none";
   if (o.stats) {
-    dlgTrimmed.textContent = o.stats.trimmed;
+    dlgFrames.textContent = o.stats.frames;
     dlgDuration.textContent = o.stats.duration;
     dlgSpeed.textContent = o.stats.speed;
   }
@@ -225,11 +222,11 @@ function reset() {
   target = [...init.agent];
   started = false;
   solved = false;
-  frames = [];
+  recording = new Recording(sim, CONTROL_HZ);
   acc = 0;
-  recAcc = 0;
   btnSave.disabled = true;
   setStatus("Touch the robot to start");
+  elCoverage.textContent = `coverage ${(sim.coverage() * 100).toFixed(0)}%`;
   render();
 }
 
@@ -276,41 +273,22 @@ btnRestart.addEventListener("click", reset);
 btnSave.addEventListener("click", saveEpisode);
 
 // Pre-send validation thresholds (world units; board is 512×512, frames at 10 Hz).
-const STATIC_EPS = 0.01; // below this, a position is considered unchanged
-const MAX_FRAME_DIST = 150; // max agent travel between two consecutive frames
-const MAX_DURATION_S = 20; // max episode length after static frames are trimmed
-
-/** Drop frames where nothing moved at all (agent, block and finger target). */
-function dropStaticFrames(all: Frame[]): Frame[] {
-  const kept: Frame[] = [];
-  for (const f of all) {
-    const p = kept[kept.length - 1];
-    if (
-      p &&
-      Math.hypot(f.agent[0] - p.agent[0], f.agent[1] - p.agent[1]) < STATIC_EPS &&
-      Math.hypot(f.block[0] - p.block[0], f.block[1] - p.block[1]) < STATIC_EPS &&
-      Math.abs(f.block[2] - p.block[2]) < STATIC_EPS &&
-      Math.hypot(f.action[0] - p.action[0], f.action[1] - p.action[1]) < STATIC_EPS
-    ) {
-      continue;
-    }
-    kept.push(f);
-  }
-  return kept;
-}
+const MAX_FRAME_DIST = 150;
+const MAX_DURATION_S = 20;
 
 async function saveEpisode() {
-  const kept = dropStaticFrames(frames);
-  const removed = frames.length - kept.length;
+  if (!solved) return;
+  const frames = recording.frames;
 
+  const states = [...frames, recording.state()];
   let maxDist = 0;
-  for (let i = 1; i < kept.length; i++) {
-    const d = Math.hypot(kept[i].agent[0] - kept[i - 1].agent[0], kept[i].agent[1] - kept[i - 1].agent[1]);
+  for (let i = 1; i < states.length; i++) {
+    const d = Math.hypot(states[i].agent[0] - states[i - 1].agent[0], states[i].agent[1] - states[i - 1].agent[1]);
     if (d > maxDist) maxDist = d;
   }
-  const durationS = kept.length / CONTROL_HZ;
+  const durationS = frames.length / CONTROL_HZ;
   const stats: EpisodeStats = {
-    trimmed: `${removed} of ${frames.length}`,
+    frames: String(frames.length),
     duration: `${durationS.toFixed(1)} s`,
     speed: `${Math.round(maxDist)} px / frame`,
   };
@@ -352,7 +330,7 @@ async function saveEpisode() {
       good: false,
       title: "Not sent — too long",
       msg:
-        `${Math.round(durationS)} s of motion is over the ${MAX_DURATION_S} s limit. ` +
+        `${Math.round(durationS)} s is over the ${MAX_DURATION_S} s limit. ` +
         "Long episodes make poor training data — try to solve it faster.",
       stats,
       primary: { label: "New episode", action: reset },
@@ -363,7 +341,10 @@ async function saveEpisode() {
   btnSave.disabled = true;
   btnSave.textContent = "Sending…";
   const episode = {
+    schemaVersion: 2,
     name,
+    simulatorSha256: __SIM_SHA256__,
+    mode: "product",
     engine: ENGINE,
     dt: sim.dt,
     controlHz: CONTROL_HZ,
@@ -373,9 +354,10 @@ async function saveEpisode() {
     successThreshold: SUCCESS_THRESHOLD,
     init,
     success: solved,
-    staticFramesRemoved: removed,
-    nFrames: kept.length,
-    frames: kept,
+    finalState: recording.state(),
+    finalTimestamp: frames.length / CONTROL_HZ,
+    nFrames: frames.length,
+    frames,
   };
   try {
     const res = await fetch("/api/episodes", {
@@ -414,31 +396,15 @@ async function saveEpisode() {
 
 // ---------- loop ----------
 const MAX_CATCHUP = 0.1; // s, avoid spiral of death
-const REC_DT = 1 / CONTROL_HZ;
-
-function pushFrame() {
-  const bp = blockPose();
-  frames.push({ agent: agentPos(), block: [bp.x, bp.y, bp.angle], action: [...target] });
-}
-
 app.ticker.add((tk) => {
   if (started && !solved) {
     acc += Math.min(tk.deltaMS / 1000, MAX_CATCHUP);
-    // Step one physics tick at a time so success is detected at the exact
-    // step it happens and no frames are recorded past it.
     while (acc >= sim.dt && !solved) {
-      sim.advance(target[0], target[1], 1);
+      const complete = recording.tick(target);
       acc -= sim.dt;
-      recAcc += sim.dt;
-      let recorded = false;
-      if (recAcc >= REC_DT) {
-        recAcc -= REC_DT;
-        pushFrame();
-        recorded = true;
-      }
-      if (sim.coverage() >= SUCCESS_THRESHOLD) {
+      // Same success boundary as the Python environment: one full 10 Hz step.
+      if (complete && sim.coverage() >= SUCCESS_THRESHOLD) {
         solved = true;
-        if (!recorded) pushFrame(); // always capture the final solved state
         episodeCount++;
         elCount.textContent = String(episodeCount);
         btnSave.disabled = false;

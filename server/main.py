@@ -11,8 +11,12 @@ import re
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from server.recording import Episode
 
 # On a hosted VM point this at a persistent volume (e.g. /workspace/episodes).
 EPISODES_DIR = Path(os.environ.get("PUSHT_EPISODES_DIR", Path(__file__).parent / "episodes"))
@@ -21,25 +25,22 @@ EPISODES_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI()
 
 
+@app.exception_handler(RequestValidationError)
+async def invalid_recording(request, error):
+    # Do not echo non-finite input values into the JSON error response.
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": e["loc"], "msg": e["msg"]} for e in error.errors()
+    ]})
+
+
 def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "anon"
 
 
 @app.post("/api/episodes")
-async def save_episode(req: Request):
-    try:
-        ep = await req.json()
-    except Exception:
-        raise HTTPException(400, "invalid JSON")
-
-    name = str(ep.get("name", "")).strip()
-    frames = ep.get("frames")
-    if not name:
-        raise HTTPException(422, "name is required")
-    if not ep.get("success"):
-        raise HTTPException(422, "only successful episodes are accepted")
-    if not isinstance(frames, list) or len(frames) < 2:
-        raise HTTPException(422, "episode has no frames")
+async def save_episode(episode: Episode):
+    ep = episode.model_dump(mode="json")
+    name = episode.name.strip()
 
     fname = f"{time.time_ns()}_{slugify(name)}.json"
     # Write to a temp name, then rename: a killed request never leaves a
