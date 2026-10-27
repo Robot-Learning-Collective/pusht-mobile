@@ -273,7 +273,7 @@ A mobile-first web app on top of `pusht-wasm`:
   Save / Restart).
 - `src/main.ts` — PixiJS renderer + pointer/touch controls + real-time loop +
   10 Hz episode recording (starts when the user grabs the robot, stops at the
-  exact success step).
+  first successful control boundary).
 - `leaderboard.html` — projector page, auto-refreshing per-name counts.
 - `server/main.py` — FastAPI collector; one JSON file per successful episode in
   `server/episodes/`, plus `/api/stats`.
@@ -291,8 +291,55 @@ Production (single origin, e.g. on a RunPod CPU pod): `npm run build`, then
 (`PORT`, `PUSHT_EPISODES_DIR` env vars).
 
 Touch the blue robot to start, drag to push the grey T onto the green target;
-at ≥95% coverage the episode can be saved (name required). Pre-upload checks
-drop static frames and reject teleport-fast motion or >20 s episodes; accepted
-episodes are attributed to the entered name. `scripts/export_lerobot.py` turns
-the collected episodes into a standard LeRobot v3 dataset (videos included,
-collector names in `meta/collectors.json`).
+at ≥95% coverage the episode can be saved (name required). Pre-upload checks reject teleport-fast motion or >20 s episodes (including
+pauses); accepted episodes are attributed to the entered name. All stationary
+frames are retained.
+
+### State recordings (schema version 2)
+
+Each frame contains the state **before** its action: `agent: [x, y]`,
+`block: [x, y, angle]`, `action: [target_x, target_y]`, zero-based `step`, and
+`timestamp` in simulation seconds. The sampled action stays fixed for ten
+100 Hz physics ticks, matching one Python `env.step()`. Rendering remains
+smooth at the display rate. Success is checked after the full control step.
+The episode stores `finalState` and `finalTimestamp` separately, so the last
+transition has a real next state without an invented extra action.
+
+The raw JSON also preserves the reset seed and initial poses, physics/control
+rates, geometry, goal, success threshold, engine version and SHA-256 of the
+compiled simulator. T angles are radians; exported angles are wrapped to
+`[-pi, pi)` to match the state environment. Coordinates and action targets
+use the 512×512 simulation world, independent of phone screen size.
+
+Use a new persistent directory for these demos. The collector rejects old or
+incomplete recordings; refresh an old browser tab before recording. The
+exporter also rejects old recordings rather than silently mixing time formats.
+
+```bash
+PUSHT_EPISODES_DIR=/path/to/state-v2/episodes scripts/serve.sh
+python scripts/check_recordings.py /path/to/state-v2/episodes
+python scripts/export_lerobot.py --episodes /path/to/state-v2/episodes \
+  --out datasets/pusht_mobile_state_v2 --state-only
+```
+
+The LeRobot export contains `observation.state` and `next.observation.state`
+with `[agent_x, agent_y, block_x, block_y, block_angle]`, `action`, `next.done`,
+and standard timestamps, frame and episode indices. Omit `--state-only` to
+include rendered videos. Full episode metadata goes in `meta/recordings.json`,
+collector names in `meta/collectors.json`, and byte-for-byte original JSON
+backups in `raw/`. Keep the server directory and exported backups; the original
+dataset is not overwritten. Hub upload is opt-in with `--push`; the new default
+repository is `zaringleb/pusht_mobile_state_v2`.
+
+Before a full collection, record five successful demos and run the replay
+check above. It compares every state and terminal success against Python;
+tolerances are 0.001 pixels and 0.0001 radians for native/WASM rounding.
+
+End-to-end checks (requires the existing LeRobot export dependencies plus
+FastAPI and httpx):
+
+```bash
+npm run build:wasm
+npx tsc --noEmit
+python -m unittest discover -s tests -v
+```

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -5,6 +7,11 @@ import { defineConfig } from "vite";
 const root = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  define: {
+    __SIM_SHA256__: JSON.stringify(createHash("sha256").update(
+      readFileSync(resolve(root, "rust/pusht-wasm/pkg/pusht_wasm_bg.wasm")),
+    ).digest("hex")),
+  },
   build: {
     target: "esnext",
     rollupOptions: {
